@@ -1,0 +1,203 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Rekognition Face Liveness + 1:N Collection demo infrastructure.
+  Provisions an S3 bucket (reference/audit images), a Rekognition collection
+  (user vectors for 1:N de-duplication), a Cognito Identity Pool with guest
+  access for the frontend FaceLivenessDetector, and a backend IAM role/policy.
+  All resources are created in the region the stack is deployed to; deploy in
+  the SAME region as your Rekognition endpoint (recommended: us-east-1).
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: liveness-demo
+    Description: Prefix for resource names.
+  CollectionId:
+    Type: String
+    Default: liveness-demo-collection
+    Description: Rekognition collection ID for 1:N user vectors.
+  S3BucketName:
+    Type: String
+    Default: ''
+    Description: >
+      Globally-unique bucket name for liveness images. Leave empty to
+      auto-generate from project name + account id + region.
+
+Conditions:
+  AutoBucketName: !Equals [!Ref S3BucketName, '']
+
+Resources:
+  # -------------------------------------------------------------------------
+  # S3 bucket for Face Liveness reference & audit images (same account+region).
+  # -------------------------------------------------------------------------
+  LivenessBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !If
+        - AutoBucketName
+        - !Sub '${ProjectName}-${AWS::AccountId}-${AWS::Region}'
+        - !Ref S3BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-audit-images
+            Status: Enabled
+            Prefix: liveness-audit/
+            ExpirationInDays: 90
+            NoncurrentVersionExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  LivenessBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LivenessBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt LivenessBucket.Arn
+              - !Sub '${LivenessBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # -------------------------------------------------------------------------
+  # Rekognition collection (user/face vectors for 1:N).
+  # -------------------------------------------------------------------------
+  FaceCollection:
+    Type: AWS::Rekognition::Collection
+    Properties:
+      CollectionId: !Ref CollectionId
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # -------------------------------------------------------------------------
+  # Cognito Identity Pool + guest role for the frontend liveness component.
+  # -------------------------------------------------------------------------
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub '${ProjectName}-idpool'
+      AllowUnauthenticatedIdentities: true
+
+  CognitoUnauthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-cognito-unauth'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              StringEquals:
+                'cognito-identity.amazonaws.com:aud': !Ref IdentityPool
+              'ForAnyValue:StringLike':
+                'cognito-identity.amazonaws.com:amr': unauthenticated
+      Policies:
+        - PolicyName: StartFaceLivenessSession
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'rekognition:StartFaceLivenessSession'
+                Resource: '*'
+
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        unauthenticated: !GetAtt CognitoUnauthRole.Arn
+
+  # -------------------------------------------------------------------------
+  # Backend IAM role/policy (attach to ECS/EC2/Lambda running the API).
+  # -------------------------------------------------------------------------
+  BackendRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-backend-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+                - ec2.amazonaws.com
+                - lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: !Sub '${ProjectName}-backend-policy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: FaceLiveness
+                Effect: Allow
+                Action:
+                  - 'rekognition:CreateFaceLivenessSession'
+                  - 'rekognition:GetFaceLivenessSessionResults'
+                Resource: '*'
+              - Sid: CollectionAndSearch
+                Effect: Allow
+                Action:
+                  - 'rekognition:CreateCollection'
+                  - 'rekognition:DescribeCollection'
+                  - 'rekognition:IndexFaces'
+                  - 'rekognition:SearchUsersByImage'
+                  - 'rekognition:SearchUsers'
+                  - 'rekognition:SearchFacesByImage'
+                  - 'rekognition:CreateUser'
+                  - 'rekognition:AssociateFaces'
+                  - 'rekognition:DeleteUser'
+                  - 'rekognition:DeleteFaces'
+                  - 'rekognition:ListUsers'
+                  - 'rekognition:ListFaces'
+                Resource: !GetAtt FaceCollection.Arn
+              - Sid: ReadLivenessImages
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - !GetAtt LivenessBucket.Arn
+                  - !Sub '${LivenessBucket.Arn}/*'
+
+Outputs:
+  Region:
+    Value: !Ref AWS::Region
+  S3BucketNameOut:
+    Description: Set as LIVENESS_S3_BUCKET in backend .env
+    Value: !Ref LivenessBucket
+  CollectionIdOut:
+    Description: Set as REKOGNITION_COLLECTION_ID in backend .env
+    Value: !Ref CollectionId
+  IdentityPoolIdOut:
+    Description: Set as VITE_COGNITO_IDENTITY_POOL_ID in frontend .env
+    Value: !Ref IdentityPool
+  BackendRoleArnOut:
+    Value: !GetAtt BackendRole.Arn

@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and adjust. terraform.tfvars is gitignored.
+aws_region     = "us-east-1"
+project_name   = "liveness-demo"
+collection_id  = "liveness-demo-collection"
+
+# Globally-unique S3 bucket name. Leave empty to auto-generate
+# (<project_name>-<account_id>-<region>).
+s3_bucket_name = ""
+
+# Allow Terraform to delete a non-empty bucket on destroy (demo only).
+force_destroy_bucket = true
