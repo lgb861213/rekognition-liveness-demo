@@ -11,7 +11,8 @@
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | 部署指南（Terraform / CloudFormation / 后端 / 前端 / 清理 / FAQ） |
 | [docs/TESTING.md](docs/TESTING.md) | 测试验证指南（API、UI 操作、curl、已验证用例） |
 | [docs/IAM_SETUP.md](docs/IAM_SETUP.md) | 本地测试 IAM 用户与最小权限（aws configure 配置） |
-| [docs/architecture.drawio](docs/architecture.drawio) | 架构与数据流图 |
+| [docs/architecture.drawio](docs/architecture.drawio) | 架构与数据流图（基础版） |
+| [docs/architecture-secure.drawio](docs/architecture-secure.drawio) | 完整安全流程架构图（Token+绑定+状态机） |
 | [docs/flow-comparison.drawio](docs/flow-comparison.drawio) | 基础版 vs 安全增强版流程对比图 |
 
 ---
