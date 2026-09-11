@@ -19,7 +19,6 @@ from binding_store import AttemptState, BindingError, get_store
 from config import get_settings
 from schemas import (
     BoundSessionResponse,
-    CreateSessionResponse,
     EnrollResponse,
     LivenessEnrollResponse,
     LivenessResultResponse,
@@ -58,7 +57,7 @@ def health():
 
 
 @app.get("/api/collection/stats")
-def collection_stats():
+def collection_stats(account_id: str = Depends(require_account)):
     try:
         return svc.collection_stats()
     except Exception as e:  # noqa: BLE001
@@ -66,7 +65,7 @@ def collection_stats():
 
 
 @app.get("/api/collection/users")
-def list_users():
+def list_users(account_id: str = Depends(require_account)):
     try:
         return {"users": svc.list_users()}
     except Exception as e:  # noqa: BLE001
@@ -74,18 +73,9 @@ def list_users():
 
 
 @app.delete("/api/collection/users/{user_id}")
-def delete_user(user_id: str):
+def delete_user(user_id: str, account_id: str = Depends(require_account)):
     try:
         return svc.delete_user(user_id)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---- Liveness ----
-@app.post("/api/liveness/session", response_model=CreateSessionResponse)
-def create_session():
-    try:
-        return CreateSessionResponse(sessionId=svc.create_liveness_session())
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -143,7 +133,9 @@ def complete_bound_attempt(
 
 @app.get("/api/liveness/session/{session_id}/result",
          response_model=LivenessResultResponse)
-def liveness_result(session_id: str):
+def liveness_result(session_id: str, account_id: str = Depends(require_account)):
+    """Raw result lookup (authenticated). Note: the secure bound flow
+    (/api/secure/...) is the recommended path; this is a debugging aid."""
     try:
         r = svc.get_liveness_results(session_id)
         return LivenessResultResponse(**{k: v for k, v in r.items() if k != "_raw"})
@@ -151,20 +143,10 @@ def liveness_result(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/liveness/session/{session_id}/verify-enroll",
-          response_model=LivenessEnrollResponse)
-def verify_and_enroll(session_id: str):
-    try:
-        r = svc.liveness_verify_and_enroll(session_id)
-        r["matches"] = [SearchMatch(**m) for m in r["matches"]]
-        return LivenessEnrollResponse(**r)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---- Collection 1:N (standalone, for image upload testing) ----
+# ---- Collection 1:N (authenticated) ----
 @app.post("/api/collection/enroll", response_model=EnrollResponse)
-async def enroll(file: UploadFile = File(...), user_id: str = Form(None)):
+async def enroll(file: UploadFile = File(...), user_id: str = Form(None),
+                 account_id: str = Depends(require_account)):
     try:
         image_bytes = await file.read()
         r = svc.enroll_user_deduped(image_bytes, user_id)
@@ -177,7 +159,8 @@ async def enroll(file: UploadFile = File(...), user_id: str = Form(None)):
 
 
 @app.post("/api/collection/search", response_model=SearchResponse)
-async def search(file: UploadFile = File(...)):
+async def search(file: UploadFile = File(...),
+                 account_id: str = Depends(require_account)):
     try:
         image_bytes = await file.read()
         matches = svc.search_users_by_image(image_bytes)

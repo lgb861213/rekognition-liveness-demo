@@ -3,8 +3,10 @@ import { FaceLivenessDetector } from '@aws-amplify/ui-react-liveness';
 import { Loader } from '@aws-amplify/ui-react';
 import { AWS_REGION } from './amplifyConfig.js';
 import {
-  createLivenessSession,
-  verifyAndEnroll,
+  login,
+  clearToken,
+  createBoundSession,
+  completeAttempt,
   searchByImage,
   enrollByImage,
   getStats,
@@ -13,7 +15,9 @@ import {
 } from './api.js';
 
 export default function App() {
+  const [account, setAccount] = React.useState(null); // accountId once logged in
   const [stats, setStats] = React.useState(null);
+
   const refreshStats = React.useCallback(async () => {
     try {
       setStats(await getStats());
@@ -21,9 +25,20 @@ export default function App() {
       setStats(null);
     }
   }, []);
+
   React.useEffect(() => {
-    refreshStats();
-  }, [refreshStats]);
+    if (account) refreshStats();
+  }, [account, refreshStats]);
+
+  const onLogout = () => {
+    clearToken();
+    setAccount(null);
+    setStats(null);
+  };
+
+  if (!account) {
+    return <LoginScreen onLoggedIn={(acct) => setAccount(acct)} />;
+  }
 
   return (
     <div style={S.page}>
@@ -31,13 +46,14 @@ export default function App() {
         <div>
           <h1 style={S.h1}>Rekognition Face Liveness + 1:N 查重 Demo</h1>
           <p style={S.sub}>
-            流程：实时活体检测 → 参考图 1:N 查重 → 唯一则入库新用户
+            流程：Token 鉴权 → 会话绑定 → 实时活体 → 1:N 查重 → 唯一则入库
           </p>
         </div>
         <div style={S.statBox}>
-          <Stat label="Region" value={AWS_REGION} />
+          <Stat label="Account" value={account} />
           <Stat label="Users" value={stats ? stats.userCount : '—'} />
           <Stat label="Faces" value={stats ? stats.faceCount : '—'} />
+          <button style={S.btnGhost} onClick={onLogout}>登出</button>
         </div>
       </header>
 
@@ -52,6 +68,52 @@ export default function App() {
         Collection: <code>{stats?.collectionId || '—'}</code> · 生物特征数据驻留于{' '}
         {AWS_REGION}，参考图/审计图保存在同区域 S3。
       </footer>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Login screen — gate everything behind token auth
+// ---------------------------------------------------------------------------
+function LoginScreen({ onLoggedIn }) {
+  const [token, setTokenInput] = React.useState('demo-token-alice');
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const stats = await login(token.trim());
+      onLoggedIn(stats.collectionId ? 'authenticated' : 'authenticated');
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={S.loginWrap}>
+      <form style={S.loginCard} onSubmit={submit}>
+        <h1 style={S.h1}>登录</h1>
+        <p style={S.sub}>
+          需要有效 Token 才能访问。Demo Token：<code>demo-token-alice</code> /{' '}
+          <code>demo-token-bob</code> / <code>demo-token-carol</code>
+        </p>
+        <input
+          style={S.loginInput}
+          value={token}
+          onChange={(e) => setTokenInput(e.target.value)}
+          placeholder="Bearer token"
+          autoFocus
+        />
+        <button style={{ ...S.btn, marginTop: 12 }} disabled={busy}>
+          {busy ? '校验中…' : '登录'}
+        </button>
+        {error && <Banner tone="err">{error}</Banner>}
+      </form>
     </div>
   );
 }
@@ -71,6 +133,7 @@ function Stat({ label, value }) {
 function LivenessPanel({ onChange }) {
   const [loading, setLoading] = React.useState(false);
   const [sessionId, setSessionId] = React.useState(null);
+  const [attemptId, setAttemptId] = React.useState(null);
   const [result, setResult] = React.useState(null);
   const [error, setError] = React.useState(null);
   const handlingError = React.useRef(false);
@@ -80,10 +143,11 @@ function LivenessPanel({ onChange }) {
     setResult(null);
     setLoading(true);
     try {
-      const { sessionId } = await createLivenessSession();
+      const { sessionId, attemptId } = await createBoundSession();
       setSessionId(sessionId);
+      setAttemptId(attemptId);
     } catch (e) {
-      setError(String(e));
+      setError(String(e.message || e));
     } finally {
       setLoading(false);
     }
@@ -91,13 +155,14 @@ function LivenessPanel({ onChange }) {
 
   const onAnalysisComplete = async () => {
     try {
-      const data = await verifyAndEnroll(sessionId);
+      const data = await completeAttempt(attemptId, sessionId);
       setResult(data);
       onChange?.();
     } catch (e) {
-      setError(String(e));
+      setError(String(e.message || e));
     } finally {
       setSessionId(null);
+      setAttemptId(null);
     }
   };
 
@@ -107,6 +172,7 @@ function LivenessPanel({ onChange }) {
     handlingError.current = true;
     setError(err?.state || String(err));
     setSessionId(null);
+    setAttemptId(null);
     handlingError.current = false;
   };
 
@@ -492,4 +558,7 @@ const S = {
   matchBarWrap: { flex: 1 },
   matchPct: { fontSize: 13, fontWeight: 700, minWidth: 64, textAlign: 'right' },
   footer: { marginTop: 28, paddingTop: 14, borderTop: '1px solid #eef0f2', color: '#888', fontSize: 12 },
+  loginWrap: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, -apple-system, sans-serif', background: '#f5f7fa' },
+  loginCard: { background: '#fff', border: '1px solid #e3e6ea', borderRadius: 14, padding: 32, width: 420, boxShadow: '0 2px 10px rgba(0,0,0,0.08)' },
+  loginInput: { width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: '1px solid #c7ccd1', boxSizing: 'border-box' },
 };
