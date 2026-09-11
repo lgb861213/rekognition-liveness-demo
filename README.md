@@ -134,21 +134,35 @@ npm run dev      # http://localhost:3000  (已代理 /api -> :8000)
 ---
 
 ## 7. 测试验证流程
+### 登录（Token 鉴权 · 所有功能需先登录）
+打开 `http://localhost:3000` 会先看到**登录页**——无有效 Token 无法访问任何功能。
+Demo 内置 3 个 mock Token（登录页有快捷按钮，见 `backend/auth.py`）：
 
-### 活体 + 1:N（端到端，需摄像头）
-1. 打开 `http://localhost:3000`，点击「开始活体检测」。
-2. 完成头部动作/光照挑战。
-3. 后端 `verify-enroll` 会：验活体分数 → 用参考图 `SearchUsersByImage` 查重 →
-   - **命中**：返回已存在的 `userId`（重复用户）；
-   - **未命中且活体通过**：`IndexFaces` + `CreateUser` + `AssociateFaces` 入库为新用户。
+| 登录框填写的 Token | 映射业务 AccountId |
+|---|---|
+| `demo-token-alice` | `acct-alice-001` |
+| `demo-token-bob` | `acct-bob-002` |
+| `demo-token-carol` | `acct-carol-003` |
+
+> 乱填 Token → 401 拒绝。生产环境把 `auth.py` 的 `verify_token()` 换成真实 JWT/OIDC 验签即可。
+
+### 活体 + 1:N（端到端，需摄像头，安全绑定流程）
+1. 用某个 Token 登录（如 `demo-token-alice`）。
+2. 点「开始活体检测」→ 后端 `POST /api/secure/liveness/session`：验 Token→AccountId →
+   `CreateFaceLivenessSession` → 持久化绑定 `AccountId↔AttemptId↔SessionId`，返回 attemptId。
+3. 完成头部/光照挑战。
+4. 完成回调 `POST /api/secure/liveness/attempt/{attemptId}/complete`：后端**二次校验绑定关系**
+   （账号+attempt+session 一致、未过期、未重放）→ 通过才 `GetFaceLivenessSessionResults` →
+   1:N 查重 → 唯一则入库。
 
 ### Collection 1:N（图片上传，无需摄像头，快速回归）
-- 右侧面板「入库」上传一张人脸图 → 返回 `userId` / `faceId`。
+- 登录后，右侧面板「入库」上传人脸图 → **先 1:N 查重，唯一才入库**（返回 userId/faceId 或「已存在」）。
 - 「1:N 查重」上传同一人另一张图 → 返回匹配的 `userId` 与相似度。
-- 命令行等价：
+- 命令行等价（**需带 Token**）：
   ```bash
-  curl -F "file=@alice1.jpg" http://localhost:8000/api/collection/enroll
-  curl -F "file=@alice2.jpg" http://localhost:8000/api/collection/search
+  TOKEN="demo-token-alice"
+  curl -H "Authorization: Bearer $TOKEN" -F "file=@alice1.jpg" http://localhost:8000/api/collection/enroll
+  curl -H "Authorization: Bearer $TOKEN" -F "file=@alice2.jpg" http://localhost:8000/api/collection/search
   ```
 
 ### 阈值
@@ -197,6 +211,8 @@ npm run dev      # http://localhost:3000  (已代理 /api -> :8000)
 - 后端 IAM Policy 的 Collection 操作按资源 ARN 限定；活体 API 需 `Resource:*`（服务限制）。
 - 生物特征数据全程留在 `us-east-1`，不跨境。
 - `isLive` 授权判定必须在后端完成，前端返回值不可作为鉴权依据（AWS 官方要求）。
+- **Token 鉴权**：所有业务端点（活体、1:N、用户管理）均需 `Authorization: Bearer <token>`，仅 `/health` 公开；未授权一律 401。Demo 用 mock token，生产替换 `backend/auth.py` 的 `verify_token()` 为真实 JWT/OIDC 验签。
+- **会话绑定防盗用/防重放**：`POST /api/secure/liveness/session` 持久化 `AccountId↔AttemptId↔SessionId`；取结果前二次校验该绑定，并用 AttemptId 状态机（CREATED→COMPLETED/FAILED/EXPIRED）拒绝重放、拒绝跨账号越权、TTL 180s 过期（对齐 AWS SessionId 3 分钟）。见 `backend/binding_store.py`，生产可换 DynamoDB（已含映射说明）。
 
 ---
 

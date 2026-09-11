@@ -109,7 +109,19 @@ function LoginScreen({ onLoggedIn }) {
           placeholder="Bearer token"
           autoFocus
         />
-        <button style={{ ...S.btn, marginTop: 12 }} disabled={busy}>
+        <div style={S.quickRow}>
+          {['demo-token-alice', 'demo-token-bob', 'demo-token-carol'].map((t) => (
+            <button
+              type="button"
+              key={t}
+              style={{ ...S.quickBtn, ...(token === t ? S.quickBtnActive : {}) }}
+              onClick={() => setTokenInput(t)}
+            >
+              {t.replace('demo-token-', '')}
+            </button>
+          ))}
+        </div>
+        <button style={{ ...S.btn, marginTop: 12, width: '100%' }} disabled={busy}>
           {busy ? '校验中…' : '登录'}
         </button>
         {error && <Banner tone="err">{error}</Banner>}
@@ -561,4 +573,7 @@ const S = {
   loginWrap: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'system-ui, -apple-system, sans-serif', background: '#f5f7fa' },
   loginCard: { background: '#fff', border: '1px solid #e3e6ea', borderRadius: 14, padding: 32, width: 420, boxShadow: '0 2px 10px rgba(0,0,0,0.08)' },
   loginInput: { width: '100%', padding: '10px 12px', fontSize: 14, borderRadius: 8, border: '1px solid #c7ccd1', boxSizing: 'border-box' },
+  quickRow: { display: 'flex', gap: 8, marginTop: 10 },
+  quickBtn: { flex: 1, padding: '7px 8px', fontSize: 13, borderRadius: 7, border: '1px solid #c7ccd1', background: '#f7f8fa', color: '#333', cursor: 'pointer' },
+  quickBtnActive: { borderColor: '#ff9900', background: '#fff7e6', fontWeight: 700 },
 };
