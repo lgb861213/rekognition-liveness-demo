@@ -29,7 +29,7 @@
 
 > 说明：Face Liveness 的两个 action 是 AWS 限制只能用 `Resource: "*"`；集合类 action 可精确限定到 collection ARN。这与 `infra/terraform/iam.tf`、CloudFormation 模板中给后端角色的权限**完全一致**。
 
-策略 JSON 见：[`backend-test-user-policy.json`](./backend-test-user-policy.json)（把 `ACCOUNT_ID`、`YOUR_BUCKET_NAME` 替换成你的实际值）。
+策略 JSON 见：[`infra/iam/backend-test-user-policy.json`](../infra/iam/backend-test-user-policy.json)（把 `ACCOUNT_ID`、`YOUR_BUCKET_NAME` 替换成你的实际值）。
 
 ---
 
