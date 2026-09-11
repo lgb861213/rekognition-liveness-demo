@@ -10,13 +10,15 @@ Endpoints
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import rekognition_service as svc
+from auth import require_account
+from binding_store import AttemptState, BindingError, get_store
 from config import get_settings
 from schemas import (
-    CreateSessionResponse,
+    BoundSessionResponse,
     EnrollResponse,
     LivenessEnrollResponse,
     LivenessResultResponse,
@@ -55,7 +57,7 @@ def health():
 
 
 @app.get("/api/collection/stats")
-def collection_stats():
+def collection_stats(account_id: str = Depends(require_account)):
     try:
         return svc.collection_stats()
     except Exception as e:  # noqa: BLE001
@@ -63,7 +65,7 @@ def collection_stats():
 
 
 @app.get("/api/collection/users")
-def list_users():
+def list_users(account_id: str = Depends(require_account)):
     try:
         return {"users": svc.list_users()}
     except Exception as e:  # noqa: BLE001
@@ -71,25 +73,69 @@ def list_users():
 
 
 @app.delete("/api/collection/users/{user_id}")
-def delete_user(user_id: str):
+def delete_user(user_id: str, account_id: str = Depends(require_account)):
     try:
         return svc.delete_user(user_id)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ---- Liveness ----
-@app.post("/api/liveness/session", response_model=CreateSessionResponse)
-def create_session():
+# ---- Secured bound flow (Token -> AccountId -> Attempt<->Session binding) ----
+@app.post("/api/secure/liveness/session", response_model=BoundSessionResponse)
+def create_bound_session(account_id: str = Depends(require_account)):
+    """Steps 1-4: verify token -> AccountId, create session, persist the
+    AccountId <-> AttemptId <-> SessionId binding. Returns attemptId+sessionId."""
     try:
-        return CreateSessionResponse(sessionId=svc.create_liveness_session())
+        session_id = svc.create_liveness_session()
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
+    binding = get_store().create(account_id=account_id, session_id=session_id)
+    return BoundSessionResponse(
+        attemptId=binding.attempt_id,
+        sessionId=binding.session_id,
+        accountId=binding.account_id,
+        state=binding.state,
+    )
+
+
+@app.post("/api/secure/liveness/attempt/{attempt_id}/complete",
+          response_model=LivenessEnrollResponse)
+def complete_bound_attempt(
+    attempt_id: str,
+    session_id: str = Form(...),
+    account_id: str = Depends(require_account),
+):
+    """Step 8-9: App signals completion. Backend re-validates the full binding
+    (AccountId + AttemptId + SessionId) BEFORE calling
+    GetFaceLivenessSessionResults, then runs liveness + 1:N dedup + enroll.
+
+    Enforces the AttemptId state machine: rejects replay / expired / mismatched."""
+    store = get_store()
+    try:
+        store.validate(attempt_id, account_id, session_id)
+    except BindingError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    try:
+        result = svc.liveness_verify_and_enroll(session_id)
+    except Exception as e:  # noqa: BLE001
+        store.transition(attempt_id, AttemptState.FAILED)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Terminal state: COMPLETED if live, FAILED otherwise. Prevents replay.
+    store.transition(
+        attempt_id,
+        AttemptState.COMPLETED if result["isLive"] else AttemptState.FAILED,
+    )
+    result["matches"] = [SearchMatch(**m) for m in result["matches"]]
+    return LivenessEnrollResponse(**result)
 
 
 @app.get("/api/liveness/session/{session_id}/result",
          response_model=LivenessResultResponse)
-def liveness_result(session_id: str):
+def liveness_result(session_id: str, account_id: str = Depends(require_account)):
+    """Raw result lookup (authenticated). Note: the secure bound flow
+    (/api/secure/...) is the recommended path; this is a debugging aid."""
     try:
         r = svc.get_liveness_results(session_id)
         return LivenessResultResponse(**{k: v for k, v in r.items() if k != "_raw"})
@@ -97,20 +143,10 @@ def liveness_result(session_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/liveness/session/{session_id}/verify-enroll",
-          response_model=LivenessEnrollResponse)
-def verify_and_enroll(session_id: str):
-    try:
-        r = svc.liveness_verify_and_enroll(session_id)
-        r["matches"] = [SearchMatch(**m) for m in r["matches"]]
-        return LivenessEnrollResponse(**r)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---- Collection 1:N (standalone, for image upload testing) ----
+# ---- Collection 1:N (authenticated) ----
 @app.post("/api/collection/enroll", response_model=EnrollResponse)
-async def enroll(file: UploadFile = File(...), user_id: str = Form(None)):
+async def enroll(file: UploadFile = File(...), user_id: str = Form(None),
+                 account_id: str = Depends(require_account)):
     try:
         image_bytes = await file.read()
         r = svc.enroll_user_deduped(image_bytes, user_id)
@@ -123,7 +159,8 @@ async def enroll(file: UploadFile = File(...), user_id: str = Form(None)):
 
 
 @app.post("/api/collection/search", response_model=SearchResponse)
-async def search(file: UploadFile = File(...)):
+async def search(file: UploadFile = File(...),
+                 account_id: str = Depends(require_account)):
     try:
         image_bytes = await file.read()
         matches = svc.search_users_by_image(image_bytes)

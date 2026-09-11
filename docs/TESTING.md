@@ -117,7 +117,65 @@ curl -s -X DELETE http://localhost:8000/api/collection/users/user-xxxx
 
 ---
 
-## 7. 阈值调优
+## 7. 安全绑定流程（Token + AccountId↔AttemptId↔SessionId）
+
+> 分支 `feature/session-binding-auth` 新增。用于生产级测试：Token 鉴权 + 会话绑定 +
+> AttemptId 状态机（防盗用/防重放/防串改）。绑定存储默认内存，可换 DynamoDB。
+
+### 流程
+```
+1. App 用现有 Token 调后端         → Authorization: Bearer <token>
+2. 后端验 Token → AccountId
+3. 后端 CreateFaceLivenessSession  → SessionId
+4. 后端持久化绑定  AccountId ↔ AttemptId ↔ SessionId  (返回 attemptId)
+5-6. App 从 Identity Pool 取临时凭证，调 StartFaceLivenessSession（Amplify 组件封装）
+7. AWS 校验 IAM 权限 + SessionId 有效性
+8. App 完成后回调后端（带 attemptId + sessionId + Token）
+9. 后端再次校验绑定关系 → 通过才 GetFaceLivenessSessionResults
+```
+
+### 安全接口
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/secure/liveness/session` | 需 Bearer Token；创建会话并绑定，返回 attemptId/sessionId/accountId/state |
+| POST | `/api/secure/liveness/attempt/{attemptId}/complete` | 需 Token + form `session_id`；校验绑定后取结果 + 1:N + 入库 |
+
+### Demo Token（mock，见 `backend/auth.py`）
+`demo-token-alice → acct-alice-001` · `demo-token-bob → acct-bob-002` · `demo-token-carol → acct-carol-003`
+
+### curl 测试
+```bash
+# 无 token → 401
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:8000/api/secure/liveness/session
+
+# 有效 token → 200，返回 attemptId + sessionId
+RESP=$(curl -s -X POST http://localhost:8000/api/secure/liveness/session \
+  -H "Authorization: Bearer demo-token-alice"); echo "$RESP"
+
+# 用错误账号（bob）完成 alice 的 attempt → 403 AccountId mismatch
+# 用错误 sessionId → 403 SessionId mismatch
+# 重复完成同一 attempt → 403 terminal（防重放）
+```
+
+### 已验证用例（feature 分支）
+| # | 场景 | 预期 | 结果 |
+|---|---|---|---|
+| B1 | 无 token 创建会话 | 401 | ✅ |
+| B2 | 无效 token | 401 | ✅ |
+| B3 | 有效 token 创建 | 200 + attemptId + state=CREATED | ✅ |
+| B4 | 错误账号完成 | 403 AccountId mismatch | ✅ |
+| B5 | 错误 sessionId | 403 SessionId mismatch | ✅ |
+| B6 | 未知 attemptId | 403 Unknown | ✅ |
+| B7 | 重放（已完成再调） | 403 terminal | ✅ |
+| B8 | 状态机非法转移 | BindingError | ✅ |
+| B9 | 会话过期（TTL 180s） | 403 expired，状态→EXPIRED | ✅ |
+
+自动化测试：`cd backend && pytest -q test_binding_auth.py`（11 passed）。
+实测：上述 curl 针对真实 AWS `CreateFaceLivenessSession` 全部符合预期。
+
+---
+
+## 8. 阈值调优
 
 | 变量 | 默认 | 说明 |
 |---|---|---|

@@ -1,0 +1,38 @@
+<mxfile host="drawio-jsapi" version="1.0.0"><diagram id="d1" name="Basic vs Secure Flow">
+<mxGraphModel dx="1426" dy="798" grid="1" gridSize="10" guides="1" page="1" pageScale="1" pageWidth="1500" pageHeight="900"><root>
+<mxCell id="0"/><mxCell id="1" parent="0"/>
+
+<mxCell id="title" value="Face Liveness 流程对比：基础版 (main) vs 安全增强版 (feature/session-binding-auth)" style="text;html=1;fontSize=17;fontStyle=1;align=center;" vertex="1" parent="1"><mxGeometry x="40" y="20" width="1420" height="30" as="geometry"/></mxCell>
+
+<!-- ===== LEFT: BASIC ===== -->
+<mxCell id="Lpane" value="基础版（main 分支）— 无鉴权，任何人可调" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FBECEC;strokeColor=#C0392B;verticalAlign=top;align=center;fontStyle=1;fontColor=#922;fontSize=13;spacingTop=8;" vertex="1" parent="1"><mxGeometry x="40" y="70" width="680" height="470" as="geometry"/></mxCell>
+<mxCell id="Lb1" value="1. App 点击开始活体" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1"><mxGeometry x="80" y="120" width="260" height="40" as="geometry"/></mxCell>
+<mxCell id="Lb2" value="2. 后端 CreateFaceLivenessSession&#10;→ 直接返回裸 SessionId（无绑定）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1"><mxGeometry x="80" y="185" width="260" height="50" as="geometry"/></mxCell>
+<mxCell id="Lb3" value="3. Amplify 组件活体检测&#10;(StartFaceLivenessSession)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1"><mxGeometry x="80" y="260" width="260" height="50" as="geometry"/></mxCell>
+<mxCell id="Lb4" value="4. 后端 GetFaceLivenessSessionResults&#10;→ 1:N 查重 → 入库" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1"><mxGeometry x="80" y="335" width="260" height="50" as="geometry"/></mxCell>
+<mxCell id="Lrisk" value="⚠ 风险&#10;• 任何人可直接调用后端 API&#10;• SessionId 可被盗用 / 串改&#10;• 无防重放、无会话-账号绑定" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;" vertex="1" parent="1"><mxGeometry x="400" y="185" width="290" height="200" as="geometry"/></mxCell>
+<mxCell id="Le1" style="endArrow=block;html=1;" edge="1" parent="1" source="Lb1" target="Lb2"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="Le2" style="endArrow=block;html=1;" edge="1" parent="1" source="Lb2" target="Lb3"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="Le3" style="endArrow=block;html=1;" edge="1" parent="1" source="Lb3" target="Lb4"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+<!-- ===== RIGHT: SECURE ===== -->
+<mxCell id="Rpane" value="安全增强版（本 PR）— Token 鉴权 + 会话绑定 + 状态机" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;verticalAlign=top;align=center;fontStyle=1;fontColor=#1b5e20;fontSize=13;spacingTop=8;" vertex="1" parent="1"><mxGeometry x="760" y="70" width="700" height="470" as="geometry"/></mxCell>
+<mxCell id="Rb1" value="1. App 用现有 Token 调后端 (Bearer)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1"><mxGeometry x="800" y="115" width="300" height="34" as="geometry"/></mxCell>
+<mxCell id="Rb2" value="2. 后端验 Token → AccountId" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="1"><mxGeometry x="800" y="160" width="300" height="30" as="geometry"/></mxCell>
+<mxCell id="Rb3" value="3. CreateFaceLivenessSession → SessionId" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1"><mxGeometry x="800" y="200" width="300" height="30" as="geometry"/></mxCell>
+<mxCell id="Rb4" value="4. 持久化绑定 AccountId ↔ AttemptId ↔ SessionId" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d4edda;strokeColor=#28a745;fontSize=12;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="800" y="240" width="300" height="34" as="geometry"/></mxCell>
+<mxCell id="Rb5" value="5-6. App 取临时凭证 → StartFaceLivenessSession" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1"><mxGeometry x="800" y="284" width="300" height="34" as="geometry"/></mxCell>
+<mxCell id="Rb6" value="7. AWS 校验 IAM 权限 + SessionId 有效性" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;" vertex="1" parent="1"><mxGeometry x="800" y="328" width="300" height="30" as="geometry"/></mxCell>
+<mxCell id="Rb7" value="8-9. App 回调后端 (Token+attemptId+sessionId)&#10;后端二次校验绑定 → GetFaceLivenessSessionResults" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d4edda;strokeColor=#28a745;fontSize=12;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="800" y="368" width="300" height="46" as="geometry"/></mxCell>
+<mxCell id="Rsm" value="AttemptId 状态机&#10;&#10;CREATED&#10;  ↓ (complete)&#10;COMPLETED / FAILED&#10;  ✗ EXPIRED (TTL 180s)&#10;&#10;• 拒绝重放（终态不可再用）&#10;• 拒绝跨账号越权&#10;• 拒绝过期会话" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d4edda;strokeColor=#28a745;fontSize=11;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;" vertex="1" parent="1"><mxGeometry x="1140" y="160" width="290" height="254" as="geometry"/></mxCell>
+<mxCell id="Re1" style="endArrow=block;html=1;" edge="1" parent="1" source="Rb1" target="Rb2"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="Re2" style="endArrow=block;html=1;" edge="1" parent="1" source="Rb2" target="Rb3"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="Re3" style="endArrow=block;html=1;" edge="1" parent="1" source="Rb3" target="Rb4"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="Re4" style="endArrow=block;html=1;" edge="1" parent="1" source="Rb4" target="Rb5"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="Re5" style="endArrow=block;html=1;" edge="1" parent="1" source="Rb5" target="Rb6"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="Re6" style="endArrow=block;html=1;" edge="1" parent="1" source="Rb6" target="Rb7"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+<!-- ===== DIFF TABLE ===== -->
+<mxCell id="difftitle" value="差异对比" style="text;html=1;fontSize=14;fontStyle=1;align=left;" vertex="1" parent="1"><mxGeometry x="40" y="560" width="300" height="24" as="geometry"/></mxCell>
+<mxCell id="dt" value="维度 | 基础版 (main) | 安全增强版 (本 PR)&#10;鉴权 | 无，任何人可调 | Token(Bearer) 校验，401 拦截&#10;会话绑定 | 无（裸 SessionId） | AccountId↔AttemptId↔SessionId 持久化&#10;结果获取 | 直接用 SessionId 查 | 先二次校验绑定关系再查&#10;防重放 | 无 | AttemptId 状态机（终态不可复用）&#10;防越权 | 无 | 账号不匹配拒绝(403)&#10;会话过期 | 依赖 AWS 3min | 后端 TTL 180s 显式失效&#10;前端 | 直接调用 | 登录门禁 + 全程带 Token&#10;端点保护 | 全部公开 | 除 /health 外全部需鉴权&#10;适用 | 快速验证/演示 | 贴近生产/合规" style="text;html=1;fontSize=12;align=left;verticalAlign=top;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#999999;spacingLeft=10;spacingTop=8;" vertex="1" parent="1"><mxGeometry x="40" y="590" width="1420" height="270" as="geometry"/></mxCell>
+</root></mxGraphModel></diagram></mxfile>

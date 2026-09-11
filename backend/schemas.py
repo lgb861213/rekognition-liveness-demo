@@ -9,6 +9,16 @@ class CreateSessionResponse(BaseModel):
     sessionId: str
 
 
+class BoundSessionResponse(BaseModel):
+    """Returned to the authenticated App: the SessionId plus the AttemptId that
+    binds this session to the caller's AccountId. The App echoes attemptId back
+    when fetching results."""
+    attemptId: str
+    sessionId: str
+    accountId: str
+    state: str
+
+
 class LivenessResultResponse(BaseModel):
     sessionId: str
     status: str
