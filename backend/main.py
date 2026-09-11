@@ -10,12 +10,15 @@ Endpoints
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 import rekognition_service as svc
+from auth import require_account
+from binding_store import AttemptState, BindingError, get_store
 from config import get_settings
 from schemas import (
+    BoundSessionResponse,
     CreateSessionResponse,
     EnrollResponse,
     LivenessEnrollResponse,
@@ -85,6 +88,57 @@ def create_session():
         return CreateSessionResponse(sessionId=svc.create_liveness_session())
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Secured bound flow (Token -> AccountId -> Attempt<->Session binding) ----
+@app.post("/api/secure/liveness/session", response_model=BoundSessionResponse)
+def create_bound_session(account_id: str = Depends(require_account)):
+    """Steps 1-4: verify token -> AccountId, create session, persist the
+    AccountId <-> AttemptId <-> SessionId binding. Returns attemptId+sessionId."""
+    try:
+        session_id = svc.create_liveness_session()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(e))
+    binding = get_store().create(account_id=account_id, session_id=session_id)
+    return BoundSessionResponse(
+        attemptId=binding.attempt_id,
+        sessionId=binding.session_id,
+        accountId=binding.account_id,
+        state=binding.state,
+    )
+
+
+@app.post("/api/secure/liveness/attempt/{attempt_id}/complete",
+          response_model=LivenessEnrollResponse)
+def complete_bound_attempt(
+    attempt_id: str,
+    session_id: str = Form(...),
+    account_id: str = Depends(require_account),
+):
+    """Step 8-9: App signals completion. Backend re-validates the full binding
+    (AccountId + AttemptId + SessionId) BEFORE calling
+    GetFaceLivenessSessionResults, then runs liveness + 1:N dedup + enroll.
+
+    Enforces the AttemptId state machine: rejects replay / expired / mismatched."""
+    store = get_store()
+    try:
+        store.validate(attempt_id, account_id, session_id)
+    except BindingError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+    try:
+        result = svc.liveness_verify_and_enroll(session_id)
+    except Exception as e:  # noqa: BLE001
+        store.transition(attempt_id, AttemptState.FAILED)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # Terminal state: COMPLETED if live, FAILED otherwise. Prevents replay.
+    store.transition(
+        attempt_id,
+        AttemptState.COMPLETED if result["isLive"] else AttemptState.FAILED,
+    )
+    result["matches"] = [SearchMatch(**m) for m in result["matches"]]
+    return LivenessEnrollResponse(**result)
 
 
 @app.get("/api/liveness/session/{session_id}/result",
