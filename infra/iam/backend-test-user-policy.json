@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "FaceLiveness",
+      "Effect": "Allow",
+      "Action": [
+        "rekognition:CreateFaceLivenessSession",
+        "rekognition:GetFaceLivenessSessionResults"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CollectionAndSearch",
+      "Effect": "Allow",
+      "Action": [
+        "rekognition:CreateCollection",
+        "rekognition:DescribeCollection",
+        "rekognition:IndexFaces",
+        "rekognition:SearchUsersByImage",
+        "rekognition:SearchFacesByImage",
+        "rekognition:CreateUser",
+        "rekognition:AssociateFaces",
+        "rekognition:DeleteUser",
+        "rekognition:DeleteFaces",
+        "rekognition:ListUsers",
+        "rekognition:ListFaces"
+      ],
+      "Resource": "arn:aws:rekognition:us-east-1:ACCOUNT_ID:collection/liveness-demo-collection"
+    },
+    {
+      "Sid": "ReadLivenessImages",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::YOUR_BUCKET_NAME",
+        "arn:aws:s3:::YOUR_BUCKET_NAME/*"
+      ]
+    }
+  ]
+}
