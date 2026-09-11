@@ -41,3 +41,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Diagram generator helper (not part of the deliverable)
+gen_diagram.py
